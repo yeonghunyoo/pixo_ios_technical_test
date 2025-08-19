@@ -29,11 +29,12 @@ class CoreDataManager {
         }
     }
     
-    func createPhotoAsset(identifier: String, creationDate: Date, mediaType: PHAssetMediaType) -> PhotoAsset {
+    func createPhotoAsset(identifier: String, creationDate: Date, mediaType: PHAssetMediaType, mediaSubTypes: PHAssetMediaSubtype) -> PhotoAsset {
         let photoAsset = PhotoAsset(context: context)
         photoAsset.identifier = identifier
         photoAsset.creationDate = creationDate
         photoAsset.mediaType = Int16(mediaType.rawValue)
+        photoAsset.mediaSubTypes = Int64(mediaSubTypes.rawValue)
         saveContext()
         return photoAsset
     }
