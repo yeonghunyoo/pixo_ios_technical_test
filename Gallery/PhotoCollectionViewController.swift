@@ -36,6 +36,7 @@ class PhotoCollectionViewController: UIViewController {
     private var velocityHistory: [CGFloat] = []
 
     private weak var progressAlert: UIAlertController?
+    private var importTask: Task<Void, Error>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -56,6 +57,15 @@ class PhotoCollectionViewController: UIViewController {
         collectionView.collectionViewLayout = layout
         collectionView.delegate = self
         collectionView.register(PhotoCollectionViewCell.self, forCellWithReuseIdentifier: "PhotoCell")
+
+        collectionView.showsVerticalScrollIndicator = true
+        collectionView.showsHorizontalScrollIndicator = false
+        
+        collectionView.indicatorStyle = .default  // .default, .black, .white
+        
+        if #available(iOS 13.0, *) {
+            collectionView.verticalScrollIndicatorInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 2)
+        }
 
         view.addSubview(collectionView)
         collectionView.translatesAutoresizingMaskIntoConstraints = false
@@ -207,6 +217,8 @@ class PhotoCollectionViewController: UIViewController {
 
     /// 보여지는 셀에대해서 캐시를 지우고 dataSource를 수정
     private func reconfigureVisibleCells() {
+        if (currentColumnCount >= 5.0) { return }
+        
         let visibleIndexPaths = collectionView.indexPathsForVisibleItems
         for indexPath in visibleIndexPaths {
             if let item = dataSource.itemIdentifier(for: indexPath) {
@@ -249,53 +261,6 @@ class PhotoCollectionViewController: UIViewController {
         picker.delegate = self
         present(picker, animated: true)
     }
-
-    private func showProgressIndicator(total: Int) async {
-    await MainActor.run {
-        let alert = UIAlertController(
-            title: "사진 가져오는 중...",
-            message: "0 / \(total)",
-            preferredStyle: .alert
-        )
-        
-        // 취소 버튼 추가
-        let cancelAction = UIAlertAction(title: "취소", style: .cancel) { _ in
-//            self.cancelImport()
-        }
-        alert.addAction(cancelAction)
-        
-        // 진행률 바 추가 (선택사항)
-        let progressView = UIProgressView(progressViewStyle: .default)
-        progressView.progress = 0.0
-        progressView.translatesAutoresizingMaskIntoConstraints = false
-        
-        alert.setValue(progressView, forKey: "accessoryView")
-        
-        self.progressAlert = alert
-        self.present(alert, animated: true)
-    }
-}
-
-private func updateProgress(current: Int, total: Int) async {
-    await MainActor.run {
-        guard let alert = progressAlert else { return }
-        
-        let percentage = Float(current) / Float(total)
-        alert.message = "\(current) / \(total) (\(Int(percentage * 100))%)"
-        
-        // 진행률 바 업데이트
-        if let progressView = alert.value(forKey: "accessoryView") as? UIProgressView {
-            progressView.setProgress(percentage, animated: true)
-        }
-    }
-}
-
-private func hideProgressIndicator() async {
-    await MainActor.run {
-        progressAlert?.dismiss(animated: true)
-        progressAlert = nil
-    }
-}
 }
 
 // MARK: - UICollectionViewDelegateFlowLayout
@@ -321,12 +286,10 @@ extension PhotoCollectionViewController: UICollectionViewDelegateFlowLayout {
     }
     
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        if (currentColumnCount >= 5.0) { return }
         self.reconfigureVisibleCells()
     }
     
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if (currentColumnCount >= 5.0) { return }
         // 관성 스크롤도중 드래깅시 감속과 드래깅 End함수가 함께 호출되므로 체크
         if (!scrollView.isDecelerating) {
             self.reconfigureVisibleCells()
@@ -341,23 +304,170 @@ extension PhotoCollectionViewController: PHPickerViewControllerDelegate {
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         dismiss(animated: true)
         print("results: \(results.count)")
-        for result in results {
-            guard let assetIdentifier = result.assetIdentifier else { continue }
+
+        importTask = Task.detached { [weak self] in
+            await self?.fetchPhotosInBackground(results)
+        }
+    }
+
+    private func fetchPhotosInBackground(_ results: [PHPickerResult]) async {
+        let totalCount = results.count
+        var collectedAssets: [PHAsset] = []  // 🔧 PHAsset만 수집
+        
+        showProgressDialog(total: totalCount)
+        
+        // 🎯 1단계: PHAsset들만 수집 (CoreData 저장 안함)
+        for (currentIndex, result) in results.enumerated() {
+ 
+            if let asset = await fetchPHAsset(from: result) {
+                collectedAssets.append(asset)
+            }
             
-            let assetResults = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil)
-            guard let asset = assetResults.firstObject else { continue }
+            updateProgress(current: currentIndex + 1, total: totalCount)
+        }
+        
+        // 🎯 2단계: 모든 수집 완료 후 배치로 CoreData 저장
+        if !Task.isCancelled && !collectedAssets.isEmpty {
             
-            let photoAsset = coreDataManager.createPhotoAsset(
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                
+                if !(self.importTask?.isCancelled ?? true) {
+                    Task {
+                        await self.saveBatchToCoreData(assets: collectedAssets)
+                    }
+                } else {
+                    self.fetchPhotosCancelled()
+                }
+            }
+        }
+        
+        // await dismissProgressDialog() 
+    }
+
+    private func fetchPHAsset(from result: PHPickerResult) async -> PHAsset? {
+        guard let identifier = result.assetIdentifier else { return nil }
+        
+        return await Task.detached {
+            let fetchedAssets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
+            return fetchedAssets.firstObject
+        }.value
+    }
+
+    private func saveBatchToCoreData(assets: [PHAsset]) async {
+        let photoAssets = assets.map { asset in
+            coreDataManager.createPhotoAsset(
                 identifier: asset.localIdentifier,
                 creationDate: Date(),
                 mediaType: asset.mediaType,
                 mediaSubTypes: asset.mediaSubtypes
             )
-            
-            var snapshot = dataSource.snapshot()
-            snapshot.appendItems([.init(model: photoAsset)], toSection: .main)
-            dataSource.apply(snapshot, animatingDifferences: true)
         }
+        
+        addPhotosToGallery(photoAssets)
+    }
+
+    private func createPhotoFromResult(_ result: PHPickerResult) async -> PhotoAsset? {
+        guard let identifier = result.assetIdentifier else { return nil }
+        
+        return await Task.detached { [weak self] in
+            guard let self = self else { return nil }
+            
+            let fetchedAssets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
+            guard let asset = fetchedAssets.firstObject else { return nil }
+            
+            return self.coreDataManager.createPhotoAsset(
+                identifier: asset.localIdentifier,
+                creationDate: Date(),
+                mediaType: asset.mediaType,
+                mediaSubTypes: asset.mediaSubtypes
+            )
+        }.value
+    }
+
+    // MARK: - UI Updates
+
+    @MainActor
+    private func replaceWithCompleteButton() {
+         guard let alert = progressAlert else { return }
+        
+        // 제목과 메시지 변경
+        alert.title = "완료"
+        alert.message = "사진이 성공적으로 추가되었습니다"
+        
+        // 기존 액션들 수정
+        alert.actions.forEach { action in
+            if action.title == "취소" {
+                // 취소 버튼을 완료 버튼으로 변경
+                action.setValue("완료", forKey: "title")
+                action.setValue(UIAlertAction.Style.default.rawValue, forKey: "style")
+            }
+        }
+    }
+
+    private func addPhotosToGallery(_ photos: [PhotoAsset]) {
+        guard !photos.isEmpty else { return }
+        
+        var gallerySnapshot = dataSource.snapshot()
+        let photoItems = photos.map { PhotoItem(model: $0) }
+        
+        gallerySnapshot.appendItems(photoItems, toSection: .main)
+        dataSource.apply(gallerySnapshot, animatingDifferences: true) {
+            self.replaceWithCompleteButton()
+        }
+    }
+
+    @MainActor
+    private func showProgressDialog(total: Int) {
+        let alert = UIAlertController(
+            title: "사진 가져오는 중",
+            message: createProgressMessage(current: 0, total: total),
+            preferredStyle: .alert
+        )
+        
+        let cancelButton = UIAlertAction(title: "취소", style: .cancel) { _ in
+            self.cancelImport()
+        }
+        
+        alert.addAction(cancelButton)
+        progressAlert = alert
+        
+        present(progressAlert!, animated: true)
+    }
+
+    @MainActor
+    private func updateProgress(current: Int, total: Int) {
+        progressAlert?.message = createProgressMessage(current: current, total: total)
+    }
+
+   @MainActor
+    private func dismissProgressDialog(completion: (() -> Void)? = nil) {
+        self.progressAlert?.dismiss(animated: true, completion: completion)
+        self.progressAlert = nil
+    }
+
+    // MARK: - Helper Methods
+    private func createProgressMessage(current: Int, total: Int) -> String {
+        let percentage = total > 0 ? Int((Double(current) / Double(total)) * 100) : 0
+        return "\(current) / \(total) (\(percentage)%)"
+    }
+
+    @MainActor
+    private func fetchPhotosCancelled() {
+        dismissProgressDialog()
+        
+        let alert = UIAlertController(
+            title: "취소됨",
+            message: "사진 가져오기가 취소되었습니다.\n아무것도 저장되지 않았습니다.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "확인", style: .default))
+        present(alert, animated: true)
+    }
+
+    private func cancelImport() {
+        print("cancelImport \(importTask)")
+        importTask?.cancel()
+        importTask = nil
     }
 }
 
@@ -472,7 +582,7 @@ class PhotoCollectionViewCell: UICollectionViewCell {
                 }
                 
                 // // Task 취소 확인 후 UI 업데이트
-                // guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else { return }
                 
                 await MainActor.run {
                     self.imageView.image = image
@@ -499,10 +609,3 @@ class PhotoCollectionViewCell: UICollectionViewCell {
     }
 }
 
-extension Array {
-    func chunked(into size: Int) -> [[Element]] {
-        return stride(from: 0, to: count, by: size).map {
-            Array(self[$0..<Swift.min($0 + size, count)])
-        }
-    }
-}
