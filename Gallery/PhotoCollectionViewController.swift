@@ -98,109 +98,91 @@ class PhotoCollectionViewController: UIViewController {
     @objc private func handlePinchGesture(_ gesture: UIPinchGestureRecognizer) {
         switch gesture.state {
         case .began:
-            cumulativeScale = 1.0
-            velocityHistory.removeAll()
-            print("🟢 핀치 시작")
+            resetPinchState()
             
         case .changed:
-            let now = CACurrentMediaTime()
             let previousColumnCount = currentColumnCount
-            
-            // 속도 추적
-            let velocity = abs(gesture.velocity)
-            velocityHistory.append(velocity)
-            if velocityHistory.count > 5 { velocityHistory.removeFirst() }
-            
-            let avgVelocity = velocityHistory.reduce(0, +) / CGFloat(velocityHistory.count)
-            
+            updateVelocityHistory(with: abs(gesture.velocity))
             cumulativeScale *= gesture.scale
             
-            // 🚀 속도에 따른 동적 임계값 및 간격
-            let (threshold, interval) = calculateDynamicParameters(velocity: avgVelocity)
-            
-            if now - lastChangeTime > interval {
-                var stepsToChange = 1
-                
-                // 🎯 매우 빠른 핀치일 때는 여러 단계 한번에 변경
-                if avgVelocity > 8.0 {
-                    stepsToChange = 3  // 3단계 점프
-                } else if avgVelocity > 5.0 {
-                    stepsToChange = 2  // 2단계 점프
-                }
-                
-                if cumulativeScale > (1.0 + threshold) {
-                    changeColumnCount(direction: -stepsToChange)  // 확대
-                    cumulativeScale = 1.0
-                    lastChangeTime = now
-                } else if cumulativeScale < (1.0 - threshold) {
-                    changeColumnCount(direction: stepsToChange)   // 축소
-                    cumulativeScale = 1.0
-                    lastChangeTime = now
-                }
+            if shouldProcessPinchChange() {
+                processColumnChange()
             }
             
             if previousColumnCount != currentColumnCount {
                 updateLayoutAndImages()
             }
-            
             gesture.scale = 1.0
             
         case .ended, .cancelled:
-            cumulativeScale = 1.0
-            velocityHistory.removeAll()
-            print("🔴 핀치 종료")
+            resetPinchState()
             
         default:
             break
         }
     }
 
-    // 🎛️ 속도에 따른 파라미터 계산
+    // MARK: - Pinch Gesture Helpers
+    
+    private func resetPinchState() {
+        cumulativeScale = 1.0
+        velocityHistory.removeAll()
+    }
+    
+    private func updateVelocityHistory(with velocity: CGFloat) {
+        velocityHistory.append(velocity)
+        if velocityHistory.count > 5 { 
+            velocityHistory.removeFirst() 
+        }
+    }
+    
+    private func shouldProcessPinchChange() -> Bool {
+        let now = CACurrentMediaTime()
+        let avgVelocity = velocityHistory.reduce(0, +) / CGFloat(velocityHistory.count)
+        let (_, interval) = calculateDynamicParameters(velocity: avgVelocity)
+        return now - lastChangeTime > interval
+    }
+    
+    private func processColumnChange() {
+        let avgVelocity = velocityHistory.reduce(0, +) / CGFloat(velocityHistory.count)
+        let (threshold, _) = calculateDynamicParameters(velocity: avgVelocity)
+        let stepsToChange = calculateStepsToChange(for: avgVelocity)
+        
+        if cumulativeScale > (1.0 + threshold) {
+            changeColumnCount(direction: -stepsToChange)
+            resetColumnChangeState()
+        } else if cumulativeScale < (1.0 - threshold) {
+            changeColumnCount(direction: stepsToChange)
+            resetColumnChangeState()
+        }
+    }
+    
+    private func calculateStepsToChange(for velocity: CGFloat) -> Int {
+        if velocity > 8.0 { return 3 }
+        if velocity > 5.0 { return 2 }
+        return 1
+    }
+    
+    private func resetColumnChangeState() {
+        cumulativeScale = 1.0
+        lastChangeTime = CACurrentMediaTime()
+    }
+    
     private func calculateDynamicParameters(velocity: CGFloat) -> (threshold: CGFloat, interval: TimeInterval) {
         switch velocity {
-        case 0..<2.0:    // 매우 천천히
-            return (0.15, 0.4)   // 높은 임계값, 긴 간격 = 매우 섬세
-        case 2.0..<4.0:  // 보통 속도
-            return (0.12, 0.25)  // 중간 임계값, 중간 간격 = 적당히 섬세
-        case 4.0..<7.0:  // 빠르게
-            return (0.08, 0.15)  // 낮은 임계값, 짧은 간격 = 반응적
-        default:         // 매우 빠르게
-            return (0.05, 0.08)  // 매우 낮은 임계값, 매우 짧은 간격 = 연속 변경
+        case 0..<2.0: return (0.15, 0.4)
+        case 2.0..<4.0: return (0.12, 0.25)
+        case 4.0..<7.0: return (0.08, 0.15)
+        default: return (0.05, 0.08)
         }
     }
 
-    // 🎯 여러 단계 변경 함수
     private func changeColumnCount(direction: Int) {
         guard let currentIndex = possibleColumnCounts.firstIndex(of: currentColumnCount) else { return }
-        
         let newIndex = currentIndex + direction
+        guard newIndex >= 0 && newIndex < possibleColumnCounts.count else { return }
         
-        // 범위 체크
-        if newIndex >= 0 && newIndex < possibleColumnCounts.count {
-            let newColumnCount = possibleColumnCounts[newIndex]
-            print("📏 \(direction > 0 ? "축소" : "확대"): \(currentColumnCount) → \(newColumnCount)컬럼 (속도: \(velocityHistory.last ?? 0))")
-            currentColumnCount = newColumnCount
-        }
-    }
-
-    private func getAdaptiveParameters(activity: CGFloat) -> (threshold: CGFloat, interval: TimeInterval, maxSteps: Int) {
-        switch activity {
-        case 0..<0.01:      // 매우 천천히
-            return (0.18, 0.5, 1)
-        case 0.01..<0.03:   // 천천히 
-            return (0.12, 0.3, 1)
-        case 0.03..<0.06:   // 보통
-            return (0.08, 0.2, 2)
-        case 0.06..<0.1:    // 빠르게
-            return (0.05, 0.1, 3)
-        default:            // 매우 빠르게
-            return (0.03, 0.05, 4)
-        }
-    }
-
-    private func calculateStepsFromScale(_ scale: CGFloat, threshold: CGFloat) -> Int {
-        let deviation = abs(scale - 1.0)
-        return Int(deviation / threshold)
+        currentColumnCount = possibleColumnCounts[newIndex]
     }
 
     private func updateLayoutAndImages() {
@@ -215,7 +197,6 @@ class PhotoCollectionViewController: UIViewController {
         }
     }
 
-    /// 보여지는 셀에대해서 캐시를 지우고 dataSource를 수정
     private func reconfigureVisibleCells() {
         if (currentColumnCount >= 5.0) { return }
         
@@ -271,9 +252,17 @@ extension PhotoCollectionViewController: UICollectionViewDelegateFlowLayout {
         layout collectionViewLayout: UICollectionViewLayout,
         sizeForItemAt indexPath: IndexPath
     ) -> CGSize {
-        let width = collectionView.frame.inset(by: collectionView.contentInset).width / currentColumnCount
-        let height = width
-        return CGSize(width: width, height: height)
+        let availableWidth = collectionView.frame.inset(by: collectionView.contentInset).width
+        let width = availableWidth / currentColumnCount
+        
+        // 부동소수점 오차로 인한 오버플로우 방지
+        let totalWidth = width * currentColumnCount
+        if totalWidth > availableWidth {
+            let adjustedWidth = floor(width * 1000) / 1000
+            return CGSize(width: adjustedWidth, height: adjustedWidth)
+        }
+        
+        return CGSize(width: width, height: width)
     }
 
     func collectionView(
@@ -303,8 +292,7 @@ extension PhotoCollectionViewController: UICollectionViewDelegateFlowLayout {
 extension PhotoCollectionViewController: PHPickerViewControllerDelegate {
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         dismiss(animated: true)
-        print("results: \(results.count)")
-
+        
         importTask = Task.detached { [weak self] in
             await self?.fetchPhotosInBackground(results)
         }
@@ -319,69 +307,36 @@ extension PhotoCollectionViewController: PHPickerViewControllerDelegate {
         // 🎯 1단계: PHAsset들만 수집 (CoreData 저장 안함)
         for (currentIndex, result) in results.enumerated() {
  
-            if let asset = await fetchPHAsset(from: result) {
-                collectedAssets.append(asset)
-            }
-            
+            guard let identifier = result.assetIdentifier else { return }
+
+            let result = await Task.detached {
+                let fetchedAssets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
+                return fetchedAssets.firstObject
+            }.value
+            guard let asset = result else { return }
+            collectedAssets.append(asset)
             updateProgress(current: currentIndex + 1, total: totalCount)
         }
         
-        // 🎯 2단계: 모든 수집 완료 후 배치로 CoreData 저장
         if !Task.isCancelled && !collectedAssets.isEmpty {
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                self.saveBatchToCoreData(assets: collectedAssets)
+            }
+        } 
+    }
+
+    private func saveBatchToCoreData(assets: [PHAsset]) {
+        dismissProgressDialog()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            Task {
                 if !(self.importTask?.isCancelled ?? true) {
-                    Task {
-                        await self.saveBatchToCoreData(assets: collectedAssets)
+                    let photoAssets = await self.coreDataManager.createPhotoAssetsBatch(from: assets)
+                    await MainActor.run {
+                        self.addPhotosToGallery(photoAssets)
                     }
-                } else {
-                    self.fetchPhotosCancelled()
                 }
             }
         }
-        
-        // await dismissProgressDialog() 
-    }
-
-    private func fetchPHAsset(from result: PHPickerResult) async -> PHAsset? {
-        guard let identifier = result.assetIdentifier else { return nil }
-        
-        return await Task.detached {
-            let fetchedAssets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
-            return fetchedAssets.firstObject
-        }.value
-    }
-
-    private func saveBatchToCoreData(assets: [PHAsset]) async {
-        let photoAssets = assets.map { asset in
-            coreDataManager.createPhotoAsset(
-                identifier: asset.localIdentifier,
-                creationDate: Date(),
-                mediaType: asset.mediaType,
-                mediaSubTypes: asset.mediaSubtypes
-            )
-        }
-        
-        addPhotosToGallery(photoAssets)
-    }
-
-    private func createPhotoFromResult(_ result: PHPickerResult) async -> PhotoAsset? {
-        guard let identifier = result.assetIdentifier else { return nil }
-        
-        return await Task.detached { [weak self] in
-            guard let self = self else { return nil }
-            
-            let fetchedAssets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
-            guard let asset = fetchedAssets.firstObject else { return nil }
-            
-            return self.coreDataManager.createPhotoAsset(
-                identifier: asset.localIdentifier,
-                creationDate: Date(),
-                mediaType: asset.mediaType,
-                mediaSubTypes: asset.mediaSubtypes
-            )
-        }.value
     }
 
     // MARK: - UI Updates
@@ -412,7 +367,7 @@ extension PhotoCollectionViewController: PHPickerViewControllerDelegate {
         
         gallerySnapshot.appendItems(photoItems, toSection: .main)
         dataSource.apply(gallerySnapshot, animatingDifferences: true) {
-            self.replaceWithCompleteButton()
+//            self.replaceWithCompleteButton(
         }
     }
 
@@ -467,14 +422,14 @@ extension PhotoCollectionViewController: PHPickerViewControllerDelegate {
     private func cancelImport() {
         print("cancelImport \(importTask)")
         importTask?.cancel()
-        importTask = nil
+        // importTask = nil
     }
 }
 
 // MARK: - PhotoCollectionViewCell
 
 class PhotoCollectionViewCell: UICollectionViewCell {
-    private var loadingTask: Task<Void, Never>?
+    private var configureTask: Task<Void, Never>?
 
     private let imageView: UIImageView = {
         let view = UIImageView()
@@ -508,7 +463,7 @@ class PhotoCollectionViewCell: UICollectionViewCell {
     
     override func prepareForReuse() {
         super.prepareForReuse()
-        loadingTask?.cancel()
+        configureTask?.cancel()
         imageView.image = nil
         videoIndicator.isHidden = true
         livePhotoIndicator.isHidden = true
@@ -538,7 +493,7 @@ class PhotoCollectionViewCell: UICollectionViewCell {
     }
     
     func configure(with photoAsset: PhotoItem, imageManager: PHCachingImageManager, currentColumnCount: CGFloat) {
-        loadingTask?.cancel()
+        configureTask?.cancel()
 
         if let thumbnail = photoAsset.thumbnail {
             self.imageView.image = thumbnail
@@ -547,19 +502,16 @@ class PhotoCollectionViewCell: UICollectionViewCell {
             let cellBounds = self.bounds
             let screenScale = UIScreen.main.scale
             
-            loadingTask = Task {
+            configureTask = Task {
                 
-                let asset = await withCheckedContinuation { continuation in
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        let fetchedAsset = PHAsset.fetchAssets(
-                            withLocalIdentifiers: [photoAsset.model.identifier!], 
-                            options: nil
-                        ).firstObject
-                        continuation.resume(returning: fetchedAsset)
-                    }
-                }
+                let result = await Task.detached(priority: .userInitiated) {
+                    PHAsset.fetchAssets(
+                        withLocalIdentifiers: [photoAsset.model.identifier!], 
+                        options: nil
+                    ).firstObject
+                }.value
                 
-                guard let asset = asset else { return }
+                guard let asset = result else { return }
                 
                 let size = CGSize(width: cellBounds.width, height: cellBounds.width)
                     .applying(.init(scaleX: screenScale, y: screenScale))
@@ -571,17 +523,11 @@ class PhotoCollectionViewCell: UICollectionViewCell {
 
                 let image = await withCheckedContinuation { continuation in
                     imageManager.requestImage(for: asset, targetSize: size, contentMode: .aspectFill, options: options) { image, info in
-                         // 🔍 마지막 호출인지 확인
-                        let isDegraded = info?[PHImageResultIsDegradedKey] as? Bool ?? false
-                        
-                        if !isDegraded {
-                            // ✅ 고품질 이미지일 때만 resume
-                            continuation.resume(returning: image)
-                        }
+                        continuation.resume(returning: image)
                     }
                 }
                 
-                // // Task 취소 확인 후 UI 업데이트
+                // 셀 스크롤시 재사용셀에서 이전 Task가 이미지를 동시에 할당하면 안되므로 취소 확인
                 guard !Task.isCancelled else { return }
                 
                 await MainActor.run {

@@ -15,7 +15,6 @@
 		466BBBE02CC4C8F60075B308 /* Base in Resources */ = {isa = PBXBuildFile; fileRef = 466BBBDF2CC4C8F60075B308 /* Base */; };
 		466BBBEB2CC4DB5B0075B308 /* CoreDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 466BBBEA2CC4DB5B0075B308 /* CoreDataManager.swift */; };
 		AC52444B2CC5EC8600737E05 /* PhotoDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC52444A2CC5EC8600737E05 /* PhotoDetailViewController.swift */; };
-		F863C6172E5489010030D4A9 /* ImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F863C6162E5489010030D4A9 /* ImageLoader.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,7 +28,6 @@
 		466BBBE12CC4C8F60075B308 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		466BBBEA2CC4DB5B0075B308 /* CoreDataManager.swift */ = {isa = PBXFileReference; indentWidth = 4; lastKnownFileType = sourcecode.swift; path = CoreDataManager.swift; sourceTree = "<group>"; tabWidth = 4; };
 		AC52444A2CC5EC8600737E05 /* PhotoDetailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDetailViewController.swift; sourceTree = "<group>"; };
-		F863C6162E5489010030D4A9 /* ImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLoader.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,7 +60,6 @@
 		466BBBCF2CC4C8F30075B308 /* Gallery */ = {
 			isa = PBXGroup;
 			children = (
-				F863C6162E5489010030D4A9 /* ImageLoader.swift */,
 				466BBBD02CC4C8F30075B308 /* AppDelegate.swift */,
 				466BBBD22CC4C8F30075B308 /* SceneDelegate.swift */,
 				466BBBD42CC4C8F30075B308 /* PhotoCollectionViewController.swift */,
@@ -146,7 +143,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F863C6172E5489010030D4A9 /* ImageLoader.swift in Sources */,
 				AC52444B2CC5EC8600737E05 /* PhotoDetailViewController.swift in Sources */,
 				466BBBDB2CC4C8F30075B308 /* Gallery.xcdatamodeld in Sources */,
 				466BBBD52CC4C8F30075B308 /* PhotoCollectionViewController.swift in Sources */,
