@@ -411,8 +411,8 @@ extension PhotoCollectionViewController: PHPickerViewControllerDelegate {
         dismissProgressDialog()
         
         let alert = UIAlertController(
-            title: "취소됨",
-            message: "사진 가져오기가 취소되었습니다.\n아무것도 저장되지 않았습니다.",
+            title: "취소",
+            message: "사진 가져오기가 취소되었습니다.",
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "확인", style: .default))
@@ -420,9 +420,7 @@ extension PhotoCollectionViewController: PHPickerViewControllerDelegate {
     }
 
     private func cancelImport() {
-        print("cancelImport \(importTask)")
         importTask?.cancel()
-        // importTask = nil
     }
 }
 
@@ -435,6 +433,7 @@ class PhotoCollectionViewCell: UICollectionViewCell {
         let view = UIImageView()
         view.contentMode = .scaleAspectFill
         view.clipsToBounds = true
+        view.backgroundColor = .systemGray6
         return view
     }()
     
